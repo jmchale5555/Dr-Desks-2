@@ -212,6 +212,166 @@ class AnalyticsDateRangeTests(TestCase):
         )
 
 
+@override_settings(AUTHENTICATION_BACKENDS=['django.contrib.auth.backends.ModelBackend'])
+class UserManagementGuardrailTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.User = get_user_model()
+        self.admin = self.User.objects.create_user(
+            username='admin',
+            password='password123',
+            email='admin@example.com',
+            is_staff=True,
+            is_active=True,
+        )
+        self.client.force_authenticate(user=self.admin)
+
+    def test_non_admin_cannot_access_user_management(self):
+        non_admin = self.User.objects.create_user(
+            username='nonadmin',
+            password='password123',
+            email='nonadmin@example.com',
+            is_staff=False,
+        )
+
+        client = APIClient()
+        client.force_authenticate(user=non_admin)
+
+        response = client.get('/api/users/', format='json')
+        self.assertEqual(response.status_code, 403)
+
+    def test_admin_can_create_local_user(self):
+        payload = {
+            'username': 'localuser',
+            'email': 'local@example.com',
+            'password': 'StrongPassword123!',
+            'password_confirm': 'StrongPassword123!',
+            'first_name': 'Local',
+            'last_name': 'User',
+            'is_staff': False,
+            'is_active': True,
+        }
+
+        response = self.client.post('/api/users/', payload, format='json')
+        self.assertEqual(response.status_code, 201)
+
+        created = self.User.objects.get(username='localuser')
+        self.assertFalse(created.is_ldap_user)
+        self.assertTrue(created.check_password('StrongPassword123!'))
+
+    def test_cannot_delete_last_active_admin(self):
+        response = self.client.delete(f'/api/users/{self.admin.id}/', format='json')
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data.get('error'), 'Cannot delete the last active admin user.')
+        self.assertTrue(self.User.objects.filter(id=self.admin.id).exists())
+
+    def test_cannot_demote_last_active_admin(self):
+        response = self.client.patch(
+            f'/api/users/{self.admin.id}/',
+            {'is_staff': False},
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data.get('error'), 'Cannot remove or deactivate the last active admin user.')
+
+        self.admin.refresh_from_db()
+        self.assertTrue(self.admin.is_staff)
+
+    def test_cannot_deactivate_last_active_admin(self):
+        response = self.client.patch(
+            f'/api/users/{self.admin.id}/',
+            {'is_active': False},
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data.get('error'), 'Cannot remove or deactivate the last active admin user.')
+
+        self.admin.refresh_from_db()
+        self.assertTrue(self.admin.is_active)
+
+    def test_ldap_user_delete_soft_disables_only(self):
+        ldap_user = self.User.objects.create_user(
+            username='ldapuser',
+            password='password123',
+            email='ldap@example.com',
+            is_ldap_user=True,
+            is_active=True,
+        )
+
+        response = self.client.delete(f'/api/users/{ldap_user.id}/', format='json')
+        self.assertEqual(response.status_code, 204)
+
+        ldap_user.refresh_from_db()
+        self.assertFalse(ldap_user.is_active)
+        self.assertTrue(self.User.objects.filter(id=ldap_user.id).exists())
+
+    def test_ldap_username_change_is_blocked(self):
+        ldap_user = self.User.objects.create_user(
+            username='ldapname',
+            password='password123',
+            email='ldapname@example.com',
+            is_ldap_user=True,
+        )
+
+        response = self.client.patch(
+            f'/api/users/{ldap_user.id}/',
+            {'username': 'newldapname'},
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('Username cannot be changed for LDAP users', str(response.data))
+
+        ldap_user.refresh_from_db()
+        self.assertEqual(ldap_user.username, 'ldapname')
+
+    def test_ldap_password_reset_is_blocked(self):
+        ldap_user = self.User.objects.create_user(
+            username='ldappass',
+            password='password123',
+            email='ldappass@example.com',
+            is_ldap_user=True,
+        )
+
+        response = self.client.post(
+            f'/api/users/{ldap_user.id}/set-password/',
+            {
+                'password': 'NewPassword123!',
+                'password_confirm': 'NewPassword123!',
+            },
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data.get('error'), 'Password reset is not allowed for LDAP users.')
+
+    def test_local_password_reset_succeeds(self):
+        user = self.User.objects.create_user(
+            username='localreset',
+            password='password123',
+            email='localreset@example.com',
+            is_ldap_user=False,
+        )
+
+        response = self.client.post(
+            f'/api/users/{user.id}/set-password/',
+            {
+                'password': 'BrandNewPassword123!',
+                'password_confirm': 'BrandNewPassword123!',
+            },
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data.get('message'), 'Password updated successfully')
+
+        user.refresh_from_db()
+        self.assertTrue(user.check_password('BrandNewPassword123!'))
+
+
 @skip('LDAP auth tests temporarily disabled until LDAP backend is re-enabled')
 class LDAPAuthTests(TestCase):
     """Placeholder suite for LDAP authentication behavior tests."""

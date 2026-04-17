@@ -2,7 +2,9 @@ import os
 from datetime import date, timedelta
 
 from django.contrib.auth import get_user_model, authenticate
+from django.contrib.auth.password_validation import validate_password
 from django.db.models import Q
+from django.core.exceptions import ValidationError as DjangoValidationError
 from rest_framework import serializers
 from rest_framework.exceptions import AuthenticationFailed, PermissionDenied
 
@@ -19,12 +21,115 @@ class UserSerializer(serializers.ModelSerializer):
         model = User
         fields = [
             'id', 'username', 'email', 'first_name', 'last_name',
-            'is_staff', 'is_ldap_user', 'auth_source', 'department',
+            'is_staff', 'is_active', 'is_ldap_user', 'auth_source', 'department',
             'phone', 'date_joined', 'last_login'
         ]
         read_only_fields = [
             'id', 'is_ldap_user', 'auth_source', 'date_joined', 'last_login'
         ]
+
+
+class UserCreateSerializer(serializers.ModelSerializer):
+    """Serializer for admin-created local users"""
+    password = serializers.CharField(write_only=True, min_length=8)
+    password_confirm = serializers.CharField(write_only=True)
+
+    class Meta:
+        model = User
+        fields = [
+            'id', 'username', 'email', 'password', 'password_confirm',
+            'first_name', 'last_name', 'department', 'phone',
+            'is_staff', 'is_active'
+        ]
+        read_only_fields = ['id']
+
+    def validate_username(self, value):
+        if User.objects.filter(username=value).exists():
+            raise serializers.ValidationError('Username already exists')
+        if len(value) < 3:
+            raise serializers.ValidationError('Username must be at least 3 characters')
+        return value
+
+    def validate_email(self, value):
+        if value and User.objects.filter(email=value).exists():
+            raise serializers.ValidationError('Email already registered')
+        return value
+
+    def validate(self, data):
+        if data.get('password') != data.get('password_confirm'):
+            raise serializers.ValidationError({'password_confirm': 'Passwords do not match'})
+
+        try:
+            validate_password(data.get('password'))
+        except DjangoValidationError as exc:
+            raise serializers.ValidationError({'password': list(exc.messages)})
+
+        return data
+
+    def create(self, validated_data):
+        validated_data.pop('password_confirm')
+        password = validated_data.pop('password')
+
+        user = User.objects.create_user(
+            password=password,
+            is_ldap_user=False,
+            **validated_data,
+        )
+        return user
+
+
+class UserUpdateSerializer(serializers.ModelSerializer):
+    """Serializer for admin updates to existing users"""
+
+    class Meta:
+        model = User
+        fields = [
+            'id', 'username', 'email', 'first_name', 'last_name',
+            'department', 'phone', 'is_staff', 'is_active'
+        ]
+        read_only_fields = ['id']
+
+    def validate_username(self, value):
+        instance = self.instance
+        if instance and instance.is_ldap_user and value != instance.username:
+            raise serializers.ValidationError('Username cannot be changed for LDAP users')
+
+        queryset = User.objects.filter(username=value)
+        if instance:
+            queryset = queryset.exclude(pk=instance.pk)
+        if queryset.exists():
+            raise serializers.ValidationError('Username already exists')
+
+        if len(value) < 3:
+            raise serializers.ValidationError('Username must be at least 3 characters')
+
+        return value
+
+    def validate_email(self, value):
+        instance = self.instance
+        queryset = User.objects.filter(email=value)
+        if instance:
+            queryset = queryset.exclude(pk=instance.pk)
+        if value and queryset.exists():
+            raise serializers.ValidationError('Email already registered')
+        return value
+
+
+class UserPasswordResetSerializer(serializers.Serializer):
+    """Serializer for admin password resets (local users only)"""
+    password = serializers.CharField(write_only=True, min_length=8)
+    password_confirm = serializers.CharField(write_only=True)
+
+    def validate(self, data):
+        if data.get('password') != data.get('password_confirm'):
+            raise serializers.ValidationError({'password_confirm': 'Passwords do not match'})
+
+        try:
+            validate_password(data.get('password'))
+        except DjangoValidationError as exc:
+            raise serializers.ValidationError({'password': list(exc.messages)})
+
+        return data
 
 
 class RegisterSerializer(serializers.ModelSerializer):

@@ -16,7 +16,8 @@ import os
 import logging
 from .models import Room, Desk, Booking, RoomLayout, LDAPSettings
 from .serializers import (
-    UserSerializer, RegisterSerializer, LoginSerializer, RoomSerializer, DeskSerializer, BookingSerializer, RoomLayoutSerializer, LDAPSettingsSerializer,
+    UserSerializer, UserCreateSerializer, UserUpdateSerializer, UserPasswordResetSerializer,
+    RegisterSerializer, LoginSerializer, RoomSerializer, DeskSerializer, BookingSerializer, RoomLayoutSerializer, LDAPSettingsSerializer,
 )
 from django.core.cache import cache
 
@@ -105,9 +106,32 @@ class UserViewSet(viewsets.ModelViewSet):
     queryset = User.objects.all()
     serializer_class = UserSerializer
     permission_classes = [IsAuthenticated, IsAdminUser]
-    
+
+    def _active_admin_count(self):
+        return User.objects.filter(is_staff=True, is_active=True).count()
+
+    def _is_last_active_admin(self, user):
+        return user.is_staff and user.is_active and self._active_admin_count() == 1
+
+    def _validate_admin_safety_for_update(self, user, validated_data):
+        if not self._is_last_active_admin(user):
+            return
+
+        next_is_staff = validated_data.get('is_staff', user.is_staff)
+        next_is_active = validated_data.get('is_active', user.is_active)
+
+        if not next_is_staff or not next_is_active:
+            raise DRFValidationError({'error': 'Cannot remove or deactivate the last active admin user.'})
+
+    def get_serializer_class(self):
+        if self.action == 'create':
+            return UserCreateSerializer
+        if self.action in ['update', 'partial_update']:
+            return UserUpdateSerializer
+        return UserSerializer
+
     def get_queryset(self):
-        queryset = User.objects.all()
+        queryset = User.objects.all().order_by('username')
         search = self.request.query_params.get('search', None)
         if search:
             queryset = queryset.filter(
@@ -117,6 +141,45 @@ class UserViewSet(viewsets.ModelViewSet):
                 Q(last_name__icontains=search)
             )
         return queryset
+
+    def perform_update(self, serializer):
+        self._validate_admin_safety_for_update(serializer.instance, serializer.validated_data)
+        serializer.save()
+
+    def destroy(self, request, *args, **kwargs):
+        instance = self.get_object()
+
+        if self._is_last_active_admin(instance):
+            return Response(
+                {'error': 'Cannot delete the last active admin user.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if instance.is_ldap_user:
+            if instance.is_active:
+                instance.is_active = False
+                instance.save(update_fields=['is_active'])
+            return Response(status=status.HTTP_204_NO_CONTENT)
+
+        return super().destroy(request, *args, **kwargs)
+
+    @action(detail=True, methods=['post'], url_path='set-password')
+    def set_password(self, request, pk=None):
+        user = self.get_object()
+
+        if user.is_ldap_user:
+            return Response(
+                {'error': 'Password reset is not allowed for LDAP users.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        serializer = UserPasswordResetSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        user.set_password(serializer.validated_data['password'])
+        user.save(update_fields=['password'])
+
+        return Response({'message': 'Password updated successfully'})
 
 
 class RoomViewSet(viewsets.ModelViewSet):

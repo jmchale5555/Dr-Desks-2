@@ -7,6 +7,7 @@ from .views import (
 
 # Create a router and register our viewset
 router = DefaultRouter()
+router.register(r'users', UserViewSet, basename='user')
 router.register(r'rooms', RoomViewSet, basename='room')
 router.register(r'desks', DeskViewSet, basename='desk')
 router.register(r'bookings', BookingViewSet, basename='booking')
