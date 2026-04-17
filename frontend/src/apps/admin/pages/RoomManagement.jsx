@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Plus, Edit2, Trash2, MapPin, X, Upload, Image as ImageIcon } from 'lucide-react';
 import { useRooms } from '../../../hooks/useRooms';
+import { useHorizontalDragScroll } from '../../../hooks/useHorizontalDragScroll';
 import { roomService } from '../../../services/roomService';
 
 const sanitizeFile = (file) => {
@@ -30,6 +31,7 @@ const sanitizeFile = (file) => {
 
 export default function RoomManagement() {
   const { rooms, loading, error, loadRooms, createRoom, updateRoom, deleteRoom } = useRooms(true);
+  const { containerRef, isDragging, dragHandlers } = useHorizontalDragScroll();
   
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingRoom, setEditingRoom] = useState(null);
@@ -216,7 +218,11 @@ export default function RoomManagement() {
             No rooms found. Click "Add Room" to create one.
           </div>
         ) : (
-          <div className="overflow-x-auto">
+          <div
+            ref={containerRef}
+            className={`overflow-x-auto ${isDragging ? 'cursor-grabbing select-none' : 'cursor-grab'}`}
+            {...dragHandlers}
+          >
             <table className="w-full">
               <thead>
                 <tr className="bg-gray-50 dark:bg-gray-700 border-b border-gray-200 dark:border-gray-600">

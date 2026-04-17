@@ -13,6 +13,7 @@ import {
   CheckCircle,
 } from 'lucide-react';
 import { useUsers } from '../../../hooks/useUsers';
+import { useHorizontalDragScroll } from '../../../hooks/useHorizontalDragScroll';
 
 const getErrorMessage = (err, fallback) => {
   if (!err) {
@@ -78,6 +79,7 @@ export default function UserManagement() {
     deleteUser,
     setUserPassword,
   } = useUsers(false);
+  const { containerRef, isDragging, dragHandlers } = useHorizontalDragScroll();
 
   const [search, setSearch] = useState('');
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -332,7 +334,11 @@ export default function UserManagement() {
         ) : sortedUsers.length === 0 ? (
           <div className="p-8 text-center text-gray-500 dark:text-gray-400">No users found.</div>
         ) : (
-          <div className="overflow-x-auto">
+          <div
+            ref={containerRef}
+            className={`overflow-x-auto ${isDragging ? 'cursor-grabbing select-none' : 'cursor-grab'}`}
+            {...dragHandlers}
+          >
             <table className="w-full">
               <thead>
                 <tr className="bg-gray-50 dark:bg-gray-700 border-b border-gray-200 dark:border-gray-600">
