@@ -4,7 +4,7 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from django.shortcuts import get_object_or_404
-from django.contrib.auth import login, logout, get_user_model
+from django.contrib.auth import login, logout, get_user_model, update_session_auth_hash
 from django.db.models import Q, Count
 from django.db.models.functions import ExtractWeekDay
 from django.core.exceptions import ValidationError as DjangoValidationError
@@ -17,7 +17,7 @@ import logging
 from .models import Room, Desk, Booking, RoomLayout, LDAPSettings
 from .serializers import (
     UserSerializer, UserCreateSerializer, UserUpdateSerializer, UserPasswordResetSerializer,
-    RegisterSerializer, LoginSerializer, RoomSerializer, DeskSerializer, BookingSerializer, RoomLayoutSerializer, LDAPSettingsSerializer,
+    ChangePasswordSerializer, RegisterSerializer, LoginSerializer, RoomSerializer, DeskSerializer, BookingSerializer, RoomLayoutSerializer, LDAPSettingsSerializer,
 )
 from django.core.cache import cache
 
@@ -97,6 +97,40 @@ def current_user_view(request):
     """
     serializer = UserSerializer(request.user)
     return Response(serializer.data)
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def change_password_view(request):
+    """
+    Change current user's password
+    POST /api/auth/change-password/
+    """
+    user = request.user
+
+    if user.is_ldap_user:
+        return Response(
+            {'error': 'Password reset is not available for LDAP users.'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    serializer = ChangePasswordSerializer(data=request.data)
+    serializer.is_valid(raise_exception=True)
+
+    old_password = serializer.validated_data['old_password']
+    new_password = serializer.validated_data['new_password']
+
+    if not user.check_password(old_password):
+        return Response(
+            {'old_password': ['Current password is incorrect']},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    user.set_password(new_password)
+    user.save(update_fields=['password'])
+    update_session_auth_hash(request, user)
+
+    return Response({'message': 'Password updated successfully'})
 
 
 class UserViewSet(viewsets.ModelViewSet):

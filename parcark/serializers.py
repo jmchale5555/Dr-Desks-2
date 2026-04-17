@@ -132,6 +132,24 @@ class UserPasswordResetSerializer(serializers.Serializer):
         return data
 
 
+class ChangePasswordSerializer(serializers.Serializer):
+    """Serializer for authenticated users changing their own password"""
+    old_password = serializers.CharField(write_only=True)
+    new_password = serializers.CharField(write_only=True, min_length=8)
+    new_password_confirm = serializers.CharField(write_only=True)
+
+    def validate(self, data):
+        if data.get('new_password') != data.get('new_password_confirm'):
+            raise serializers.ValidationError({'new_password_confirm': 'Passwords do not match'})
+
+        try:
+            validate_password(data.get('new_password'))
+        except DjangoValidationError as exc:
+            raise serializers.ValidationError({'new_password': list(exc.messages)})
+
+        return data
+
+
 class RegisterSerializer(serializers.ModelSerializer):
     """Serializer for user registration (local users only)"""
     password = serializers.CharField(

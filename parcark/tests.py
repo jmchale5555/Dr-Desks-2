@@ -99,6 +99,63 @@ class LoginTests(TestCase):
         me_response = self.client.get('/api/auth/me/', format='json')
         self.assertEqual(me_response.status_code, 403)
 
+    def test_change_password_success(self):
+        self.client.force_authenticate(user=self.user)
+
+        response = self.client.post(
+            '/api/auth/change-password/',
+            {
+                'old_password': 'password123',
+                'new_password': 'NewStrongPassword123!',
+                'new_password_confirm': 'NewStrongPassword123!',
+            },
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data.get('message'), 'Password updated successfully')
+
+        self.user.refresh_from_db()
+        self.assertTrue(self.user.check_password('NewStrongPassword123!'))
+
+    def test_change_password_rejects_wrong_current_password(self):
+        self.client.force_authenticate(user=self.user)
+
+        response = self.client.post(
+            '/api/auth/change-password/',
+            {
+                'old_password': 'wrong-password',
+                'new_password': 'NewStrongPassword123!',
+                'new_password_confirm': 'NewStrongPassword123!',
+            },
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('Current password is incorrect', str(response.data))
+
+    def test_change_password_blocked_for_ldap_user(self):
+        ldap_user = get_user_model().objects.create_user(
+            username='ldap-user',
+            password='password123',
+            email='ldap-user@example.com',
+            is_ldap_user=True,
+        )
+        self.client.force_authenticate(user=ldap_user)
+
+        response = self.client.post(
+            '/api/auth/change-password/',
+            {
+                'old_password': 'password123',
+                'new_password': 'NewStrongPassword123!',
+                'new_password_confirm': 'NewStrongPassword123!',
+            },
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data.get('error'), 'Password reset is not available for LDAP users.')
+
 
 @override_settings(AUTHENTICATION_BACKENDS=['django.contrib.auth.backends.ModelBackend'])
 class AuthSecurityTests(TestCase):

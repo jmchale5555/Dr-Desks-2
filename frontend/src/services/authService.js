@@ -12,4 +12,7 @@ export const authService = {
   
   // GET /api/auth/me/
   getCurrentUser: () => api.get('/auth/me/'),
+
+  // POST /api/auth/change-password/
+  changePassword: (passwordData) => api.post('/auth/change-password/', passwordData),
 };
