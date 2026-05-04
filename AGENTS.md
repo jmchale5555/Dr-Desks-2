@@ -11,6 +11,10 @@
 ## Build, Test, and Development Commands
 - `docker compose up --build` runs Postgres, Django (`web`), Vite (`node`), and Nginx together.
 - `docker compose down` stops the stack and removes containers (keeps the named volume).
+- `make up` / `make down` are the preferred shortcuts for starting/stopping the stack.
+- `make migrate`, `make makemigrations`, `make createsuperuser` run common Django management commands inside the `web` container.
+- `make test-backend` runs Django tests in the `web` container.
+- `make test-frontend` runs Vitest in the `node` container.
 - `python manage.py runserver 0.0.0.0:8000` starts the Django dev server locally.
 - `python manage.py makemigrations` creates new Django migrations after model changes.
 - `python manage.py migrate` applies database migrations.
@@ -31,7 +35,8 @@
 ## Testing Guidelines
 - Backend tests use Django’s test runner: `python manage.py test`.
 - Place tests in app-level `tests.py` modules (e.g., `parcark/tests.py`).
-- No frontend test framework is configured yet.
+- Frontend tests use Vitest (`npm run test` or `npm run test:run`).
+- When using Docker, prefer `make test-backend` and `make test-frontend`.
 
 ## Commit & Pull Request Guidelines
 - Git history is minimal (only “Transfer project to new repo”), so no formal convention exists.

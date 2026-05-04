@@ -30,14 +30,14 @@ From the repo root:
 ```bash
 git clone https://github.com/jmchale5555/dr-desks-2
 cd dr-desk-2
-(sudo) docker compose up --build
+make up
 ```
 
 After the initial build completes:
 
 ```bash
-(sudo) docker compose exec web python manage.py migrate
-(sudo) docker compose exec web python manage.py createsuperuser
+make migrate
+make createsuperuser
 ```
 
 Then open:
@@ -73,6 +73,23 @@ Current development values are defined in `docker-compose.yaml`.
   - Used by frontend API client in `frontend/src/services/api.js`
 
 ## Useful development commands
+
+### Makefile shortcuts (recommended)
+
+```bash
+make help
+make up
+make down
+make logs
+make ps
+make migrate
+make makemigrations
+make createsuperuser
+make test-backend
+make npm-install
+make test-frontend
+make build-frontend
+```
 
 ### Docker-based (recommended in this repo)
 
@@ -145,10 +162,13 @@ API routing is currently mounted at both:
 ## Testing
 
 - Backend: Django test runner
+  - `make test-backend` (recommended)
   - `python manage.py test`
   - or `docker compose exec web python manage.py test`
 - Frontend: Vitest
+  - `make test-frontend` (recommended)
   - `npm run test`
+  - `npm run test:run`
 
 Note: LDAP-specific auth tests are currently intentionally skipped while LDAP auth behavior is under active changes.
 

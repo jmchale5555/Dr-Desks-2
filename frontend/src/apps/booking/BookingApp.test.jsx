@@ -287,4 +287,71 @@ describe('BookingApp', () => {
       )
     ).toBeInTheDocument();
   });
+
+  test('shows error when rooms request fails', async () => {
+    server.use(
+      http.get(`${API_BASE_URL}/rooms/`, () => HttpResponse.json({ detail: 'Boom' }, { status: 500 }))
+    );
+
+    renderBookingApp();
+
+    expect(await screen.findByText(/Failed to load rooms/i)).toBeInTheDocument();
+  });
+
+  test('shows error when desks request fails after room selection', async () => {
+    server.use(
+      http.get(`${API_BASE_URL}/rooms/`, () =>
+        HttpResponse.json([{ id: 1, name: 'Room A', number_of_desks: 1 }])
+      ),
+      http.get(`${API_BASE_URL}/desks/`, () => HttpResponse.json({ detail: 'Boom' }, { status: 500 })),
+      http.get(`${API_BASE_URL}/bookings/`, () =>
+        HttpResponse.json({ results: [] })
+      )
+    );
+
+    renderBookingApp();
+
+    const user = userEvent.setup();
+    const roomSelect = await screen.findByRole('combobox');
+    await user.selectOptions(roomSelect, '1');
+
+    expect(await screen.findByText(/Failed to load desks/i)).toBeInTheDocument();
+  });
+
+  test('selecting a PM slot reveals booking button', async () => {
+    server.use(
+      http.get(`${API_BASE_URL}/rooms/`, () =>
+        HttpResponse.json([{ id: 1, name: 'Room A', number_of_desks: 1 }])
+      ),
+      http.get(`${API_BASE_URL}/desks/`, () =>
+        HttpResponse.json([{ id: 10, desk_number: 1 }])
+      ),
+      http.get(`${API_BASE_URL}/bookings/`, () =>
+        HttpResponse.json({ results: [] })
+      )
+    );
+
+    renderBookingApp();
+
+    const user = userEvent.setup();
+    const roomSelect = await screen.findByRole('combobox');
+    await user.selectOptions(roomSelect, '1');
+
+    await screen.findByRole('option', { name: /Desk 1/i });
+    const [, deskSelect] = screen.getAllByRole('combobox');
+    await user.selectOptions(deskSelect, '10');
+
+    await waitFor(() => {
+      expect(
+        screen.queryByText(/Please select a room and desk to view availability/i)
+      ).not.toBeInTheDocument();
+    });
+
+    const pmButtons = await screen.findAllByRole('button', { name: /PM/ });
+    await user.click(pmButtons[0]);
+
+    expect(
+      await screen.findByRole('button', { name: /Book 1 Slot/i })
+    ).toBeInTheDocument();
+  });
 });

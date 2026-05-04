@@ -435,3 +435,176 @@ class LDAPAuthTests(TestCase):
 
     def test_ldap_login_flow_placeholder(self):
         pass
+
+
+@override_settings(AUTHENTICATION_BACKENDS=['django.contrib.auth.backends.ModelBackend'])
+class BookingApiTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.User = get_user_model()
+        self.user = self.User.objects.create_user(
+            username='booking-user',
+            password='password123',
+            email='booking-user@example.com',
+        )
+        self.other_user = self.User.objects.create_user(
+            username='other-user',
+            password='password123',
+            email='other-user@example.com',
+        )
+        self.admin = self.User.objects.create_user(
+            username='booking-admin',
+            password='password123',
+            email='booking-admin@example.com',
+            is_staff=True,
+        )
+
+        self.room = Room.objects.create(name='Booking Room', number_of_desks=2)
+        self.desk_1 = self.room.desks.order_by('desk_number').first()
+        self.desk_2 = self.room.desks.order_by('desk_number')[1]
+
+    def test_create_booking_success_returns_201_and_booking_message(self):
+        self.client.force_authenticate(user=self.user)
+        booking_date = date.today() + timedelta(days=1)
+
+        response = self.client.post(
+            '/api/bookings/',
+            {
+                'desk': self.desk_1.id,
+                'date': booking_date.isoformat(),
+                'period': 'am',
+            },
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.data.get('message'), 'Booking created successfully')
+        self.assertEqual(response.data.get('booking', {}).get('desk'), self.desk_1.id)
+        self.assertEqual(response.data.get('booking', {}).get('period'), 'am')
+
+    def test_create_booking_rejects_past_date(self):
+        self.client.force_authenticate(user=self.user)
+        booking_date = date.today() - timedelta(days=1)
+
+        response = self.client.post(
+            '/api/bookings/',
+            {
+                'desk': self.desk_1.id,
+                'date': booking_date.isoformat(),
+                'period': 'am',
+            },
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data.get('error'), 'Cannot book a desk in the past')
+
+    def test_create_booking_rejects_user_timeslot_conflict(self):
+        self.client.force_authenticate(user=self.user)
+        booking_date = date.today() + timedelta(days=2)
+
+        Booking.objects.create(
+            user=self.user,
+            desk=self.desk_1,
+            date=booking_date,
+            period='am',
+        )
+
+        response = self.client.post(
+            '/api/bookings/',
+            {
+                'desk': self.desk_2.id,
+                'date': booking_date.isoformat(),
+                'period': 'am',
+            },
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data.get('error'), 'You already have a booking in this timeslot.')
+        self.assertEqual(response.data.get('existing_booking', {}).get('desk'), self.desk_1.desk_number)
+
+    def test_cancel_booking_owner_can_cancel_future_booking(self):
+        self.client.force_authenticate(user=self.user)
+        booking = Booking.objects.create(
+            user=self.user,
+            desk=self.desk_1,
+            date=date.today() + timedelta(days=3),
+            period='pm',
+        )
+
+        response = self.client.delete(f'/api/bookings/{booking.id}/', format='json')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data.get('message'), 'Booking cancelled successfully')
+        self.assertFalse(Booking.objects.filter(id=booking.id).exists())
+
+    def test_cancel_booking_non_owner_non_admin_gets_403(self):
+        self.client.force_authenticate(user=self.user)
+        booking = Booking.objects.create(
+            user=self.other_user,
+            desk=self.desk_1,
+            date=date.today() + timedelta(days=3),
+            period='pm',
+        )
+
+        response = self.client.delete(f'/api/bookings/{booking.id}/', format='json')
+
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.data.get('error'), 'You can only cancel your own bookings')
+        self.assertTrue(Booking.objects.filter(id=booking.id).exists())
+
+    def test_cancel_booking_admin_can_cancel_other_users_booking(self):
+        self.client.force_authenticate(user=self.admin)
+        booking = Booking.objects.create(
+            user=self.other_user,
+            desk=self.desk_1,
+            date=date.today() + timedelta(days=4),
+            period='full',
+        )
+
+        response = self.client.delete(f'/api/bookings/{booking.id}/', format='json')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data.get('message'), 'Booking cancelled successfully')
+        self.assertFalse(Booking.objects.filter(id=booking.id).exists())
+
+    def test_my_bookings_returns_only_authenticated_users_upcoming(self):
+        self.client.force_authenticate(user=self.user)
+        upcoming_date = date.today() + timedelta(days=1)
+        past_date = date.today() - timedelta(days=1)
+
+        Booking.objects.create(
+            user=self.user,
+            desk=self.desk_1,
+            date=upcoming_date,
+            period='am',
+        )
+        Booking.objects.create(
+            user=self.user,
+            desk=self.desk_1,
+            date=past_date,
+            period='pm',
+        )
+        Booking.objects.create(
+            user=self.other_user,
+            desk=self.desk_2,
+            date=upcoming_date,
+            period='am',
+        )
+
+        response = self.client.get('/api/bookings/my-bookings/', format='json')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data.get('count'), 1)
+        self.assertEqual(len(response.data.get('results', [])), 1)
+        self.assertEqual(response.data['results'][0]['user'], self.user.id)
+        self.assertEqual(response.data['results'][0]['date'], upcoming_date.isoformat())
+
+    def test_availability_requires_room_and_date(self):
+        self.client.force_authenticate(user=self.user)
+
+        response = self.client.get('/api/bookings/availability/', {'room': self.room.id}, format='json')
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data.get('error'), 'room and date parameters required')
