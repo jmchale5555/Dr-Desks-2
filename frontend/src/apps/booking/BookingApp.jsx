@@ -360,6 +360,16 @@ export default function BookingApp() {
     };
   }, [selectedRoom, roomLayout, mapDate, mapPeriod, desks, bookings, selectedDesk, setSelectedDesk]);
 
+  useEffect(() => {
+    if (!actionError) return undefined;
+
+    const timeoutId = setTimeout(() => {
+      setActionError(null);
+    }, 5000);
+
+    return () => clearTimeout(timeoutId);
+  }, [actionError]);
+
   const formatDate = (date) => {
     const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
     const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
